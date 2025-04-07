@@ -165,7 +165,7 @@ func addReminder(text string) {
 			fmt.Printf(" %s(parsed as: %s%s%s)%s",
 				gray,
 				blue,
-				parsedTime.Format("Mon Jan 2 15:04:05 2006"),
+				parsedTime.Format("Mon Jan 2 15:04:05"),
 				gray,
 				reset)
 		}
