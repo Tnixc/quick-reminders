@@ -43,13 +43,13 @@ var commands = map[string]Command{
 		Aliases:     "a|add",
 		Description: "Add a new reminder",
 		Usage:       "<reminder text> [date/time]",
-		Example:     "Buy groceries\nCall mom tomorrow at 5pm",
+		Example:     "",
 	},
 	"remove": {
-		Aliases:     "r|remove",
+		Aliases:     "d|r|del|remove",
 		Description: "Remove a reminder by index or text",
 		Usage:       "<index|text>",
-		Example:     "2\nBuy groceries",
+		Example:     "",
 	},
 }
 
@@ -77,7 +77,7 @@ func main() {
 		}
 		reminderText := strings.Join(os.Args[2:], " ")
 		addReminder(reminderText)
-	case "r", "remove":
+	case "d", "r", "del", "remove":
 		if len(os.Args) < 3 {
 			fmt.Println("Error: No reminder index or text provided")
 			printUsage()
@@ -138,38 +138,60 @@ func addReminder(text string) {
 	var reminderCmd *exec.Cmd
 	var parsedTime time.Time
 
-	result := dt[0].Date
+	if len(dt) > 0 {
+		result := dt[0].Date
+		dateText := dt[0].Text
 
-	if err != nil || !result.Time.After(time.Now()) {
-		reminderCmd = exec.Command("reminders", "add", "Sooner", text)
-	} else {
-		parsedTime = result.Time
-		dateTime := parsedTime.Format("2006-01-02 15:04:05")
+		cleanText := strings.TrimSpace(strings.Replace(text, dateText, "", 1))
 
-		// Since we don't have direct access to the matched text position,
-		// we'll just use the full text as the reminder
-		cleanText := text
+		if err != nil || !result.Time.After(time.Now()) {
+			reminderCmd = exec.Command("reminders", "add", "Sooner", text)
+		} else {
+			parsedTime = result.Time
+			dateTime := parsedTime.Format("2006-01-02 15:04:05")
 
-		reminderCmd = exec.Command("reminders", "add", "Sooner", cleanText, "-d", dateTime)
-	}
-
-	reminderCmd.Stdout = nil
-	reminderCmd.Stderr = os.Stderr
-
-	if err := reminderCmd.Run(); err != nil {
-		fmt.Printf("Error adding reminder: %v\n", err)
-		os.Exit(1)
-	} else {
-		fmt.Printf("Added %s'%s'%s", gray, green+text+gray, reset)
-		if !parsedTime.IsZero() {
-			fmt.Printf(" %s(parsed as: %s%s%s)%s",
-				gray,
-				blue,
-				parsedTime.Format("Mon Jan 2 15:04:05"),
-				gray,
-				reset)
+			reminderCmd = exec.Command("reminders", "add", "Sooner", cleanText, "-d", dateTime)
 		}
-		fmt.Println()
+
+		reminderCmd.Stdout = nil
+		reminderCmd.Stderr = os.Stderr
+
+		if err := reminderCmd.Run(); err != nil {
+			fmt.Printf("Error adding reminder: %v\n", err)
+			os.Exit(1)
+		} else {
+			fmt.Printf("Added %s'%s'%s", gray, green+cleanText+gray, reset)
+			if !parsedTime.IsZero() {
+				fmt.Printf(" %s(parsed as: %s%s%s)%s",
+					gray,
+					blue,
+					parsedTime.Format("Mon Jan 2 15:04:05"),
+					gray,
+					reset)
+			}
+			fmt.Println()
+		}
+	} else {
+		reminderCmd = exec.Command("reminders", "add", "Sooner", text)
+		reminderCmd.Stdout = nil
+		reminderCmd.Stderr = os.Stderr
+
+		if err := reminderCmd.Run(); err != nil {
+			fmt.Printf("Error adding reminder: %v\n", err)
+			os.Exit(1)
+		} else {
+			fmt.Printf("Added %s'%s'%s", gray, green+text+gray, reset)
+			if !parsedTime.IsZero() {
+				fmt.Printf(" %s(parsed as: %s%s%s)%s",
+					gray,
+					blue,
+					parsedTime.Format("Mon Jan 2 15:04:05"),
+					gray,
+					reset)
+			}
+			fmt.Println()
+		}
+
 	}
 }
 
