@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/lithammer/fuzzysearch/fuzzy"
-	"github.com/markusmobius/go-dateparser"
+	"github.com/tj/go-naturaldate"
 )
 
 const (
@@ -43,13 +43,13 @@ var commands = map[string]Command{
 		Aliases:     "a|add",
 		Description: "Add a new reminder",
 		Usage:       "<reminder text> [date/time]",
-		Example:     "",
+		Example:     "\"Buy groceries tomorrow at 5pm\"",
 	},
 	"remove": {
 		Aliases:     "d|r|del|remove",
 		Description: "Remove a reminder by index or text",
 		Usage:       "<index|text>",
-		Example:     "",
+		Example:     "\"groceries\" or 0",
 	},
 }
 
@@ -131,67 +131,104 @@ func listReminders() {
 	}
 }
 
+// commonDatePatterns returns regex patterns for extracting date references
+func commonDatePatterns() []string {
+	return []string{
+		// Common date patterns
+		`tomorrow at \d{1,2}(?::\d{2})? ?(?:am|pm|AM|PM)?`,
+		`today at \d{1,2}(?::\d{2})? ?(?:am|pm|AM|PM)?`,
+		`next (monday|tuesday|wednesday|thursday|friday|saturday|sunday)`,
+		`next week`,
+		`next month`,
+		`\d{1,2}(?:st|nd|rd|th)? of (january|february|march|april|may|june|july|august|september|october|november|december)`,
+		`(january|february|march|april|may|june|july|august|september|october|november|december) \d{1,2}(?:st|nd|rd|th)?`,
+		`\d{1,2}\/\d{1,2}(?:\/\d{2,4})?`, // Date formats like MM/DD or MM/DD/YYYY
+		`in \d+ (minute|hour|day|week|month|year)s?`,
+	}
+}
+
+// parseNaturalDate attempts to parse a natural language date expression
+func parseNaturalDate(dateStr string) (time.Time, error) {
+	// Handle "tomorrow at X" and similar patterns
+	now := time.Now()
+	return naturaldate.Parse(dateStr, now)
+}
+
+// extractDateFromText attempts to find and extract date information from text
+// Returns the parsed time, the text with the date portion removed, and whether a date was found
+func extractDateFromText(text string) (time.Time, string, bool) {
+	// Try using the go-naturaldate library first on the entire text
+	parsedTime, err := parseNaturalDate(text)
+	if err == nil && parsedTime.After(time.Now()) {
+		// If the entire text is interpreted as a date, return it
+		return parsedTime, text, true
+	}
+
+	// Look for specific date patterns
+	patterns := commonDatePatterns()
+	cleanText := text
+
+	// Try to find any date expression in the text
+	var dateExpression string
+	var dateStart, dateEnd int
+
+	for _, pattern := range patterns {
+		re := regexp.MustCompile(`(?i)` + pattern) // Case insensitive
+		loc := re.FindStringIndex(text)
+		if loc != nil {
+			dateStart = loc[0]
+			dateEnd = loc[1]
+			dateExpression = text[dateStart:dateEnd]
+			break
+		}
+	}
+
+	// If we found a date expression, try to parse it
+	if dateExpression != "" {
+		parsedTime, err = parseNaturalDate(dateExpression)
+		if err == nil && parsedTime.After(time.Now()) {
+			// Remove the date expression from the text
+			cleanText = text[:dateStart] + text[dateEnd:]
+			cleanText = strings.TrimSpace(cleanText)
+			return parsedTime, cleanText, true
+		}
+	}
+
+	// No valid date found
+	return time.Time{}, text, false
+}
+
 func addReminder(text string) {
-	// Parse the date
-	_, dt, err := dateparser.Search(nil, text)
+	parsedTime, cleanText, hasDate := extractDateFromText(text)
 
 	var reminderCmd *exec.Cmd
-	var parsedTime time.Time
 
-	if len(dt) > 0 {
-		result := dt[0].Date
-		dateText := dt[0].Text
-
-		cleanText := strings.TrimSpace(strings.Replace(text, dateText, "", 1))
-
-		if err != nil || !result.Time.After(time.Now()) {
-			reminderCmd = exec.Command("reminders", "add", "Sooner", text)
-		} else {
-			parsedTime = result.Time
-			dateTime := parsedTime.Format("2006-01-02 15:04:05")
-
-			reminderCmd = exec.Command("reminders", "add", "Sooner", cleanText, "-d", dateTime)
-		}
-
-		reminderCmd.Stdout = nil
-		reminderCmd.Stderr = os.Stderr
-
-		if err := reminderCmd.Run(); err != nil {
-			fmt.Printf("Error adding reminder: %v\n", err)
-			os.Exit(1)
-		} else {
-			fmt.Printf("Added %s'%s'%s", gray, green+cleanText+gray, reset)
-			if !parsedTime.IsZero() {
-				fmt.Printf(" %s(parsed as: %s%s%s)%s",
-					gray,
-					blue,
-					parsedTime.Format("Mon Jan 2 15:04:05"),
-					gray,
-					reset)
-			}
-			fmt.Println()
-		}
-	} else {
+	if !hasDate || parsedTime.IsZero() {
+		// No date found, add reminder without a date
 		reminderCmd = exec.Command("reminders", "add", "Sooner", text)
-		reminderCmd.Stdout = nil
-		reminderCmd.Stderr = os.Stderr
+		cleanText = text // Use original text
+	} else {
+		// Format the date for the reminders command
+		dateTime := parsedTime.Format("2006-01-02 15:04:05")
+		reminderCmd = exec.Command("reminders", "add", "Sooner", cleanText, "-d", dateTime)
+	}
 
-		if err := reminderCmd.Run(); err != nil {
-			fmt.Printf("Error adding reminder: %v\n", err)
-			os.Exit(1)
-		} else {
-			fmt.Printf("Added %s'%s'%s", gray, green+text+gray, reset)
-			if !parsedTime.IsZero() {
-				fmt.Printf(" %s(parsed as: %s%s%s)%s",
-					gray,
-					blue,
-					parsedTime.Format("Mon Jan 2 15:04:05"),
-					gray,
-					reset)
-			}
-			fmt.Println()
+	reminderCmd.Stderr = os.Stderr
+
+	if err := reminderCmd.Run(); err != nil {
+		fmt.Printf("Error adding reminder: %v\n", err)
+		os.Exit(1)
+	} else {
+		fmt.Printf("Added %s'%s'%s", gray, green+cleanText+gray, reset)
+		if hasDate && !parsedTime.IsZero() {
+			fmt.Printf(" %s(parsed as: %s%s%s)%s",
+				gray,
+				blue,
+				parsedTime.Format("Mon Jan 2 15:04:05"),
+				gray,
+				reset)
 		}
-
+		fmt.Println()
 	}
 }
 
@@ -293,10 +330,17 @@ func printUsage() {
 	fmt.Println("\nExamples:")
 	for _, cmd := range commands {
 		if cmd.Example != "" {
-			for _, example := range strings.Fields(cmd.Example) {
-				fmt.Printf("  qr %s %s\n", strings.Split(cmd.Aliases, "|")[0], example)
-			}
+			alias := strings.Split(cmd.Aliases, "|")[0]
+			fmt.Printf("  qr %s %s\n", alias, cmd.Example)
 		}
 	}
 	fmt.Println()
+}
+
+// Go 1.21+ has built-in max, but providing it here for compatibility
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
